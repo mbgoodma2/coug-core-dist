@@ -1,0 +1,64 @@
+- name: Configure BYU BGP EVPN Automation
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  tasks:
+  
+  - set_fact:
+       poc_switch: "{{ hostvars[inventory_hostname] }}"
+
+  - name: Deploy BGP and EVPN Address Familes
+    nclu:
+        commit: true
+        description: "Deploy BGP and EVPN Address Familes"
+        commands:
+            - add loopback lo ip address {{ poc_switch.loopback }}/32
+            - add interface eth0 vrf mgmt
+            - add bgp autonomous-system {{ poc_switch.bgpasn }}
+            - add bgp network {{ poc_switch.loopback }}/32
+            - add bgp bestpath as-path multipath-relax
+            - add bgp l2vpn evpn advertise-all-vni
+            - add hostname {{ poc_switch.hostname }}
+  
+  - name: Deploy BGP and EVPN Interfaces
+    nclu:
+        commit: true
+        description: "Deploy BGP and EVPN Interfaces"
+        commands:
+            - add bgp neighbor swp"{{ item.int_name }}" remote-as "{{ item.type }}"
+            - add bgp l2vpn evpn neighbor swp"{{ item.int_name }}" activate
+    with_items:
+      - "{{ poc_switch.uplinks }}"
+
+  - name: Deploy Bond Interfaces
+    nclu:
+        commit: true
+        description: "Deploy Bond Interfaces"
+        template: |
+           {% if poc_switch.clag_info.peerlink_bonds is defined %}
+             add bond peerlink bond slaves swp"{{ item.int_name }}"
+           {% endif %}
+    with_items:
+      - "{{ poc_switch.clag_info.peerlink_bonds}}"
+
+  - name: Deploy MLAG Anycast Interfaces
+    nclu:
+        commit: true
+        description: "Deploy MLAG Anycast Interfaces"
+        template: |
+           {% if poc_switch.clag_info.vxlan_anycast_ip is defined %}
+             add loopback lo clag vxlan-anycast-ip {{ poc_switch.clag_info.vxlan_anycast_ip }}
+             add interface peerlink.4094 ip address {{ poc_switch.clag_info.address }}
+             add interface peerlink.4094 clag peer-ip {{ poc_switch.clag_info.clagd_peer_ip }}
+             add interface peerlink.4094 clag backup-ip {{ poc_switch.clag_info.clagd_backup_ip }}
+             add interface peerlink.4094 clag sys-mac {{ poc_switch.clag_info.clagd_sys_mac }}
+             add interface peerlink.4094 clag priority {{ poc_switch.clag_info.clagd_priority }}
+           {% endif %}
+
+
+  - name: Reload Interfaces
+    command: ifreload -a
+
+#  - debug:
+#      msg: "Anycast IP is {{ poc_switch.clag_info.vxlan_anycast_ip }}"
